@@ -38,7 +38,7 @@ local secret_base_distance = 48000
 local secret_base_angle = -115
 
 -- Proximity ranges for the cluster events.
-local ambush_range = 1000       -- Cluster 1: distance to the hauler that springs the ambush.
+local ambush_range = 2000       -- Cluster 1: distance to the hauler that springs the ambush.
 local eavesdrop_range = 9000    -- Cluster 2: distance at which the meeting can be overheard.
 local flee_range = 4000         -- Cluster 2: distance at which the meeting breaks up.
 local warp_out_delay = 5         -- Cluster 2: seconds after fleeing before both ships are gone.
