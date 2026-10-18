@@ -1,9 +1,9 @@
 -- Name: Unstable 235
--- Description: An escape mission on the Kralien Cursive map. Your ship starts beside the Scriptorium, next to two canisters of unstable 235: shoot one and it collapses into a black hole, fly into one and your hull doubles in strength and your reactor, maneuvering and impulse run at full power with no overheating and no extra energy drain.
+-- Description: The sequel to Kralien Cursive. The asteroid rings have shifted, leaving eight straight lanes out from the center, and the two deposits of unstable 235 sit in the middle. BAD_LED got there first. He has taken one deposit for himself and promised every gram to the Interplanetary Directorate. The other one is yours, if you can take it and get away.
 ---
---- Unstable 235 powers planets and builds weapons that can destroy galaxies. It is one of the most tightly controlled elements there is, and the local government has been hiding it. The neighboring Interplanetary Directorate has found out. They will lock the area under a huge one-way warp jammer and flood it with mines, warships and rotating barrage stations.
+--- Unstable 235 powers planets and builds weapons that can destroy galaxies. The moment you take it aboard, the Directorate locks the rings under a huge one-way warp jammer and floods the area with mines, warships and rotating barrage stations.
 ---
---- Escape the jamming field to win. Lose your ship and you lose the game.
+--- Escape the jamming field under impulse, then deliver the unstable 235 to the Intergalactic Symposium by docking there. Lose the ship carrying it, or let it collapse into a black hole, and you lose the game.
 -- Type: Basic
 -- Setting[Enemies]: Configures how dangerous the jamming field is.
 -- Enemies[Easy]: Fewer mines, barrage stations and warships. Recommended for inexperienced crews.
@@ -38,37 +38,94 @@ local cluster_radius = 5000
 local secret_base_distance = 48000
 local secret_base_angle = -115
 
--- Unstable 235 samples sit east of the Scriptorium; the player starts west of it,
--- so a black hole (5U pull radius) doesn't catch the ship at the start.
-local sample_distance = 4000    -- From the Scriptorium to the samples.
-local sample_spread = 1500      -- Distance between the two samples.
-local player_start_distance = 1500 -- From the Scriptorium to the player ship.
+-- The rings have shifted: every band now has the same eight gaps, so eight straight,
+-- clear lanes run out from the center.
+local lane_count = 8
+local lane_width = 3000
+local lane_clear_radius = 27000 -- Mines are kept out of the lanes inside this radius.
+
+-- The two unstable 235 deposits sit on opposite sides of the ring center. BAD_LED is
+-- parked on the one he has already taken; the other is still there for the players.
+local sample_distance = 4000    -- From the ring center to each deposit.
+-- The player ship starts in one of the lanes, just outside the outermost asteroid band
+-- (25.6U) and inside the ring stations (33U), facing the center.
+local player_start_distance = 30000
 local pickup_range = 800        -- Ship center to sample center.
+
+-- BAD_LED
+local bad_led_brag_range = 25000 -- He hails the players when they get this close.
+local bad_led_flee_range = 5000  -- "Firing range": he warps away when a player gets this close...
+local bad_led_min_brag_time = 20 -- ...but not until his speech has been up this many seconds.
+
+-- The Messenger leaves this many seconds after its warning.
+local messenger_stay_time = 40
+
+-- The Intergalactic Symposium, outside the jamming field.
+local symposium_distance = 125000
+local symposium_angle = 60
 
 -- Full power is the top of the engineering slider, 300%.
 local full_power = 3.0
 local boosted_systems = {"reactor", "maneuver", "impulse"}
 
--- The Directorate's jamming field.
-local deploy_delay = 90         -- Seconds after the start before the field deploys anyway.
-local field_radius = 70000      -- Players must get this far from the center to escape.
-local field_center_offset = 4000 -- The jammer core appears this far from the player ship.
-local start_clear_radius = 5000 -- No mines or barrage stations this close to the center.
+-- The Directorate's jamming field, centered on the ring center.
+local field_radius = 100000     -- Players must get this far from the center to escape.
+local start_clear_radius = 8000 -- No scattered mines or supply drops this close to the center.
 local turret_fire_range = 12000 -- Barrage stations fire only when a player is this close.
 local turret_muzzle_offset = 800 -- HVLIs spawn this far from the station center.
 local hvli_lifetime = 10
-local wave_spawn_distance = {3500, 5500} -- Warships warp in this far from the player.
+local wave_spawn_distance = {5000, 12000} -- Wave warships warp in this far from the player.
 local mine_drop_distance = 6000 -- Each wave also drops mines this far ahead of the player.
 local sector_size = 20000       -- The game's map grid squares ("F5" and so on).
-local mine_ring_radii = {25000, 59000} -- Two dense mine rings around the field center.
-local mine_ring_rows = 4        -- Staggered rows of mines in each ring.
+-- Mine rings around the field center, each `rows` staggered rows deep. The inner one
+-- sits between the outermost asteroid band (25.6U) and the ring stations (33U); the
+-- outer one is a single line of mines near the edge of the field.
+local mine_rings = {
+    {radius = 29000, rows = 4},
+    {radius = 59000, rows = 4},
+    {radius = 87000, rows = 1},
+}
 local mine_ring_row_spacing = 650 -- Distance between the rows.
+-- Each ring's exits are turned this far from the previous ring's, give or take
+-- `mine_ring_exit_jitter`, so no exit lines up with the next one out. With two exits
+-- 180 degrees apart, 90 degrees is as far apart as they can get.
+local mine_ring_exit_turn = 90
+local mine_ring_exit_jitter = 10
 local mine_ring_spacing = 800   -- Distance between mines along a row.
-local mine_ring_exit_width = 15000 -- Each ring has three exits this wide, 60 degrees apart.
+local mine_ring_exit_width = 15000 -- Each ring has two exits this wide...
+local mine_ring_exit_count = 2
+local mine_ring_exit_spacing = 180 -- ...on opposite sides of the ring.
 local hull_kit_repair = 0.4     -- A hull repair kit restores this share of the maximum hull.
-local garrison_distance = {3000, 8000} -- Garrisons warp in this far from the player when they can.
+local garrison_min_distance = 3000 -- Garrison ships never warp in closer than this to a player.
+-- Some warships warp in across the player's path instead: this far ahead...
+local path_distance = {7000, 18000}
+local path_spread = 3500        -- ...and up to this far to either side of the course.
+local path_share = 0.4          -- Share of each garrison and wave sent to the path.
+local ship_spacing = 2500       -- New warships warp in at least this far from every other one.
 local enemy_speed_factor = 0.9  -- Directorate ships fly at 90% of the fastest player ship's speed.
 local enemy_min_speed = 40      -- ...but never slower than this.
+
+-- House music that starts when the jammer goes up, and loops through the list.
+--
+-- Put the files in resources/music/house/ (not ambient/ or combat/, which the game
+-- picks its own music from). The game can't tell the script when a track ends, so
+-- each track needs its length in seconds. Music plays on the host PC only, through
+-- its sound volume setting, and a track can't be stopped once it starts.
+local house_music = {
+    -- Plays top to bottom, in the order of the number at the start of each file name.
+    {file = "music/house/1_Daft Punk - Touch It Technologic (Live 2007 - Official Audio).ogg", length = 330},
+    {file = "music/house/2_Daft Punk - Television Rules the Nation Crescendolls (Live 2007 - Official Audio).ogg", length = 291},
+    {file = "music/house/3_Daft Punk - Too Long Steam Machine (Live 2007 - Official Audio).ogg", length = 422},
+    {file = "music/house/4_Daft Punk - Around the World Harder, Better, Faster, Stronger (Live 2007 - Official Audio).ogg", length = 343},
+    {file = "music/house/5_Daft Punk - Robot Rock Oh Yeah (Live 2007 - Official Audio).ogg", length = 388},
+    {file = "music/house/6_Psychoseptember.ogg", length = 155},
+}
+-- Music after escaping the jamming field, on repeat. It starts when the house track
+-- that is playing finishes, because a track can't be cut off.
+local journey_music = {
+    {file = "music/journey/daft punk - veridis quo (slowed + reverb).ogg", length = 488},
+}
+local music_gap = 1             -- Seconds of silence between tracks.
 
 local playerList
 local mining_central
@@ -76,20 +133,41 @@ local clusters
 local dig_site
 local caravan = {}
 local secret_base
+local symposium
 local game_over = false
-local start_timer = 0
 
 -- Unstable 235 samples. Each entry is {obj = WarpJammer, shot = bool, gone = bool}.
 local samples = {}
 -- Ships that have picked up a sample, mapped to true.
 local boosted = {}
+-- The player ship carrying the unstable 235.
+local carrier = nil
+
+-- BAD_LED: "waiting", "bragging", then "gone".
+local bad_led
+local bad_led_state = "waiting"
+local bad_led_brag_timer = 0
+local bad_led_hit = false
+
+local messenger
+local messenger_timer = nil
+local escaped = false
+
+-- The playlist that is playing (house_music, then journey_music after the escape).
+local music_playlist = house_music
+-- Music: the index of the track playing (nil before the music starts), and the
+-- seconds until the next one.
+local music_index = nil
+local music_timer = 0
 
 -- Escape phase
 local directorate_faction
 local field_deployed = false
 local field_x, field_y
 local jammer_core
-local turrets = {}  -- Each entry is {obj, angle, spin, barrels, interval, timer}.
+-- Barrage and lance platforms. Each entry is {obj, angle, spin, barrels, interval, timer};
+-- lance platforms have spin 0 and one barrel.
+local turrets = {}
 local warships = {}
 -- Sectors of the field, each with a garrison that warps in once a player ship is in
 -- that sector or one next to it. Each entry is {col, row, spawned}.
@@ -107,6 +185,10 @@ local mine_ring_exits = {}
 -- not appear inside. Each entry is {x, y, r}.
 local bodies = {}
 local speed_timer = 0
+-- Angle of the first of the eight lanes through the asteroid rings.
+local lane_offset = 0
+-- Stations that mines and warships must not appear on. Each entry is {x, y, r}.
+local station_spots = {}
 
 local pirate_names = {
     "Rust Jackal", "Grim Ledger", "Hollow Pike", "Sable Wrench", "Gutter Comet",
@@ -181,6 +263,11 @@ local function closestPlayer(x, y)
     return best, best_dist
 end
 
+--- Flashes a warp-in effect at x, y.
+local function warpInEffect(x, y, size)
+    ElectricExplosionEffect():setPosition(x, y):setSize(size):setOnRadar(true)
+end
+
 --- Returns the distance from point px, py to the segment from ax, ay to bx, by.
 local function segmentDistance(px, py, ax, ay, bx, by)
     local dx, dy = bx - ax, by - ay
@@ -252,13 +339,24 @@ local function clearOfBodies(x, y, margin)
     return true
 end
 
---- Finds a free spot for a feature of radius `r` around sx, sy, and reserves it.
--- Returns nil if no spot was found.
-local function reserveSpot(sx, sy, r)
+--- Finds a free spot for a feature of radius `r` between `inner` and `outer` from
+-- sx, sy, and reserves it. `inner` and `outer` default to the Scriptorium's terrain
+-- ring. Returns nil if no spot was found.
+--
+-- Nothing is placed across a mine ring: mines skip solid terrain, so a planet on a ring
+-- would open an extra way through it.
+local function reserveSpot(sx, sy, r, inner, outer)
+    inner, outer = inner or terrain_inner, outer or terrain_outer
     for attempt = 1, 60 do
-        local dx, dy = vectorFromAngle(random(0, 360), random(terrain_inner + r, terrain_outer - r))
+        local dx, dy = vectorFromAngle(random(0, 360), random(inner + r, outer - r))
         local x, y = sx + dx, sy + dy
-        if clearOfBodies(x, y, r + 3000) then
+        local on_ring = false
+        for idx_, ring in ipairs(mine_rings) do
+            if math.abs(distance(x, y, 0, 0) - ring.radius) < r + ring.rows * mine_ring_row_spacing / 2 + 1500 then
+                on_ring = true
+            end
+        end
+        if not on_ring and clearOfBodies(x, y, r + 3000) then
             table.insert(bodies, {x = x, y = y, r = r})
             return x, y
         end
@@ -280,12 +378,12 @@ local function createPlanet(x, y, info)
 end
 
 --- Creates a planet with moons in orbit. Reserves room for the moons' orbits too.
-local function createPlanetSystem(sx, sy, info, moons)
+local function createPlanetSystem(sx, sy, info, moons, inner, outer)
     local reach = info.radius
     for idx_, moon in ipairs(moons) do
         reach = math.max(reach, moon.orbit + moon.radius)
     end
-    local x, y = reserveSpot(sx, sy, reach)
+    local x, y = reserveSpot(sx, sy, reach, inner, outer)
     if x == nil then
         return
     end
@@ -383,9 +481,86 @@ local function createTerrain(sx, sy)
             createAsteroidField(sx + dx, sy + dy, 4000, 35)
         end
     end
+end
 
-    -- From here on, `bodies` is only used to keep mines and ships out of solid terrain,
-    -- so drop the entries that were only there to space out the terrain.
+local field_terrain_inner = 40000 -- Big terrain around the jammer starts outside the ring stations...
+local field_terrain_outer = 125000 -- ...and reaches past the edge of the jamming field.
+
+--- Fills the space in and around the jamming field with planets, moons, a star,
+-- black holes, nebulae and asteroid fields. Inside the asteroid rings it only adds
+-- things that don't block a ship: nebulae and drifting dust.
+local function createFieldTerrain()
+    local inner, outer = field_terrain_inner, field_terrain_outer
+
+    -- A blue-white star.
+    local star_x, star_y = reserveSpot(0, 0, 4000, inner, outer)
+    if star_x ~= nil then
+        createPlanet(star_x, star_y, {name = "Aurel", radius = 4000, atmosphere = "planets/star-1.png", color = {0.6, 0.75, 1.0}})
+    end
+
+    -- Planets and moons.
+    createPlanetSystem(0, 0,
+        {name = "Meridian", radius = 4500, surface = "planets/gas-2.png", color = {0.7, 0.5, 0.9}, rotation = 450},
+        {
+            {name = "Meridian I", radius = 800, surface = "planets/moon-2.png", orbit = 8000, period = 260},
+            {name = "Meridian II", radius = 1100, surface = "planets/moon-1.png", orbit = 11000, period = 420},
+        }, inner, outer)
+    createPlanetSystem(0, 0,
+        {name = "Quill", radius = 2800, surface = "planets/planet-4.png", clouds = "planets/clouds-2.png", color = {0.4, 0.9, 0.6}, rotation = 280},
+        {
+            {name = "Inkwell", radius = 700, surface = "planets/moon-3.png", orbit = 5500, period = 210},
+        }, inner, outer)
+    createPlanetSystem(0, 0,
+        {name = "Sorrow", radius = 2200, surface = "planets/planet-3.png", color = {0.6, 0.8, 1.0}, rotation = 320},
+        {}, inner, outer)
+    createPlanetSystem(0, 0,
+        {name = "Gallow", radius = 3200, surface = "planets/planet-1.png", clouds = "planets/clouds-3.png", color = {0.9, 0.5, 0.3}, rotation = 260},
+        {
+            {name = "Gallow's Rope", radius = 600, surface = "planets/moon-1.png", orbit = 6000, period = 190},
+        }, inner, outer)
+    createPlanetSystem(0, 0,
+        {name = "Pell", radius = 1800, surface = "planets/planet-5.png", color = {0.8, 0.8, 0.6}, rotation = 220},
+        {}, inner, outer)
+
+    -- Black holes. Their pull reaches 5U, so they reserve a bit more than that.
+    for n = 1, 3 do
+        local x, y = reserveSpot(0, 0, 6000, inner, outer)
+        if x ~= nil then
+            BlackHole():setPosition(x, y)
+        end
+    end
+
+    -- Nebulae and asteroid fields between the rings and the edge of the field.
+    for n = 1, 26 do
+        local x, y = vectorFromAngle(random(0, 360), random(field_terrain_inner - 6000, field_terrain_outer))
+        if clearOfBodies(x, y, 5000) then
+            Nebula():setPosition(x, y)
+        end
+    end
+    for n = 1, 16 do
+        local x, y = vectorFromAngle(random(0, 360), random(field_terrain_inner - 4000, field_terrain_outer))
+        local r = random(3000, 5000)
+        if clearOfBodies(x, y, r) then
+            createAsteroidField(x, y, r, math.floor(r / 100))
+        end
+    end
+
+    -- Inside the asteroid rings: a few nebulae, which hide ships from radar but don't
+    -- block the lanes, and the dust the shifting rings have thrown off.
+    for n = 1, 3 do
+        local x, y = vectorFromAngle(n * 120 + random(-30, 30), random(12000, 22000))
+        Nebula():setPosition(x, y)
+    end
+    for n = 1, 400 do
+        local x, y = vectorFromAngle(random(0, 360), math.sqrt(random(0, field_radius * field_radius)))
+        VisualAsteroid():setPosition(x, y)
+    end
+end
+
+--- Drops the `bodies` entries that were only there to space out the terrain.
+--
+-- From here on, `bodies` is only used to keep mines and ships out of solid terrain.
+local function finishTerrain()
     local solid = {}
     for idx_, body in ipairs(bodies) do
         if not body.terrain_only then
@@ -404,6 +579,15 @@ end
 -- math.abs(0) lines below exist for that reason.
 
 local deployField
+local spawnMessenger
+
+--- Ends the game with a win for `faction`, and shows `text` to everyone.
+local function endGame(faction, text)
+    game_over = true
+    victory(faction)
+    globalMessage(text)
+    setBanner(text)
+end
 
 --- Marks a sample as shot. The black hole is spawned from update(), not from
 -- inside the engine's damage callback.
@@ -426,11 +610,11 @@ local function createSample(x, y)
     jammer:setCallSign("Unstable 235")
     jammer:setDescriptions(
         "A small, faintly glowing canister.",
-        "Unstable 235. Any weapons fire will collapse it into a black hole. Fly into it to take it aboard: it will double the hull strength and drive the reactor, maneuvering and impulse to full power without overheating or draining energy."
+        "Unstable 235, the last deposit. Any weapons fire will collapse it into a black hole. Fly into it to take it aboard: it will double the hull strength and drive the reactor, maneuvering and impulse to full power without overheating or draining energy."
     )
     jammer:onTakingDamage(onSampleShot)
     jammer:onDestruction(onSampleShot)
-    table.insert(samples, {obj = jammer, shot = false, gone = false})
+    table.insert(samples, {obj = jammer, x = x, y = y, shot = false, gone = false})
 end
 
 --- Gives a player ship the unstable 235 boost.
@@ -459,31 +643,35 @@ local function boostShip(p)
     p:addToShipLog("Unstable 235 taken aboard. Hull strength doubled. Reactor, maneuvering and impulse at full power. No overheating, no extra energy drain.", "Yellow")
 end
 
---- Spawns black holes for shot samples, and handles pickups.
+--- Handles pickups, and fails the mission if the last sample is shot.
 --
--- Shooting or picking up a sample tips off the Directorate, which deploys the field.
+-- Picking up the sample tips off the Directorate, which deploys the field, and
+-- brings the Messenger.
 local function updateSamples()
     for idx_, sample in ipairs(samples) do
         if not sample.gone then
             local obj = sample.obj
-            if not obj:isValid() then
-                -- Destroyed without the damage callback reaching us first.
+            if not obj:isValid() or sample.shot then
                 sample.gone = true
-            elseif sample.shot then
-                sample.gone = true
-                local x, y = obj:getPosition()
-                obj:destroy()
+                local x, y = sample.x, sample.y
+                if obj:isValid() then
+                    obj:destroy()
+                end
                 BlackHole():setPosition(x, y)
                 logPlayers(string.format("Unstable 235 collapsed into a black hole in sector %s!", getSectorName(x, y)), "Red")
-                deployField(closestPlayer(x, y))
-            else
-                for idx2_, p in ipairs(playerList) do
-                    if not sample.gone and p:isValid() and distance(p, obj) < pickup_range then
-                        sample.gone = true
-                        obj:destroy()
-                        boostShip(p)
-                        deployField(p)
-                    end
+                endGame("Directorate", _("msgMainscreen&Spectbanner", "Mission: FAILED (the last unstable 235 collapsed into a black hole)"))
+                return
+            end
+            for idx2_, p in ipairs(playerList) do
+                if not sample.gone and p:isValid() and distance(p, obj) < pickup_range then
+                    sample.gone = true
+                    obj:destroy()
+                    boostShip(p)
+                    carrier = p
+                    -- The Messenger hails first, so its warning gets the comms screen
+                    -- and the Directorate's message goes to the ship's log.
+                    spawnMessenger(p)
+                    deployField()
                 end
             end
         end
@@ -497,6 +685,149 @@ local function updateBoosted()
             for idx2_, system in ipairs(boosted_systems) do
                 p:setSystemHeat(system, 0)
             end
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+-- BAD_LED
+-------------------------------------------------------------------------------
+
+local bad_led_brag = [[Well, well, well. The USS Sunday, right on schedule. And Pilot Bob! Bob, buddy, I owe you one.
+
+All that flying around the clusters, the pirates, the secret base, the old calligrapher squinting at my note... You did all the hard work of finding these coordinates, and all I had to do was listen in. Thank you, crew. Especially you, Bob.
+
+See that glow? That's an unstable 235 deposit, and it is in my reactor now. My reactor, my jump drive, my impulse engines, my maneuvering thrusters: all of it SUPER powerful. You should see this thing turn.
+
+Full disclosure: I promised the Directorate ALL the unstable 235 in these rings, for a very, very large amount of cash. Turns out there were only two deposits. HA!
+
+So here's the deal. The other one's yours, if you can keep the Directorate busy while I make my exit. Call it a reunion present.]]
+
+local bad_led_decoy = [[Ah ah ah, not so close, Bob.
+
+You really thought you could catch me? You couldn't even catch me last time! That BAD_LED you blew up in the mining rings? A decoy. An empty ship playing my recorded messages on a loop. You spent a whole mission arguing with an answering machine! HAHAHAHA!
+
+Enjoy the Directorate. BAD_LED out.]]
+
+local bad_led_replies = {
+    "Can't talk, Bob. Busy being rich.",
+    "You're still here? The Directorate is on its way, you know.",
+    "Do you hear that? That's the sound of my reactor running at three hundred percent.",
+    "Bob, you still parallel park like a drunk space cow.",
+}
+
+--- Comms for BAD_LED.
+local function commsBadLed()
+    math.abs(0) -- Provides global context for SeriousProton
+    setCommsMessage(bad_led_replies[irandom(1, #bad_led_replies)])
+end
+
+--- Notes that BAD_LED has been shot at, so he leaves.
+local function onBadLedHit()
+    math.abs(0) -- Provides global context for SeriousProton
+    bad_led_hit = true
+end
+
+--- Creates BAD_LED's ship, parked on the deposit he has already taken.
+local function createBadLed(x, y)
+    bad_led = CpuShip():setTemplate("Atlantis X23"):setFaction("Kraylor"):setCallSign("BAD_LED")
+    bad_led:setPosition(x, y):setRotation(random(0, 360)):orderIdle()
+    bad_led:setCanBeDestroyed(false)
+    bad_led:setDescriptions(
+        "BAD_LED, infamous piloting school classmate and sworn nemesis of Pilot Bob.",
+        "BAD_LED's ship. Its engines glow with the unmistakable light of unstable 235."
+    )
+    bad_led:setCommsScript(""):setCommsFunction(commsBadLed)
+    bad_led:onTakingDamage(onBadLedHit)
+end
+
+--- BAD_LED brags when the players get close, and warps away when they reach firing
+-- range or shoot at him.
+local function updateBadLed(delta)
+    if bad_led_state == "gone" or not bad_led:isValid() then
+        return
+    end
+    local p, d = closestPlayer(bad_led:getPosition())
+    if bad_led_state == "waiting" then
+        if p ~= nil and (d < bad_led_brag_range or bad_led_hit) then
+            bad_led_state = "bragging"
+            hailPlayers(bad_led, bad_led_brag, "#ff8040")
+        end
+    elseif bad_led_state == "bragging" then
+        bad_led_brag_timer = bad_led_brag_timer + delta
+        if bad_led_hit or (p ~= nil and d < bad_led_flee_range and bad_led_brag_timer > bad_led_min_brag_time) then
+            bad_led_state = "gone"
+            hailPlayers(bad_led, bad_led_decoy, "#ff8040")
+            local x, y = bad_led:getPosition()
+            warpInEffect(x, y, 1500)
+            bad_led:destroy()
+            logPlayers("BAD_LED's ship has warped away. Its 235-powered drive left no trail to follow.", "#ff8040")
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+-- The Messenger
+-------------------------------------------------------------------------------
+
+--- Returns the Messenger's warning about the field and the way to the Symposium.
+local function messengerWarning()
+    local x, y = symposium:getPosition()
+    return string.format([[This is the Messenger. You have it? Good. Now listen, and don't argue.
+
+High-tail it out of there. Take the unstable 235 to the Intergalactic Symposium in sector %s. They are the only ones who can take care of it peacefully. Whatever happens, it must not fall into the hands of the Directorate. Not at any cost.
+
+They are switching on a one-way warp jammer at the center of the rings, right behind you. Anything can warp or jump into its %dU field. Nothing warps or jumps out. Your jump drive is useless until you are clear of it.
+
+Run on impulse. The rings have shifted: there are eight straight lanes out from the center. Past the rings they have laid three belts of mines. Each has only two gaps, and no gap lines up with the next one, so expect a long way around between them. They will have warships, spinning barrage platforms and lance platforms that fire in a straight line in every sector. Once you are more than %dU from the jammer, jump for the Symposium and dock there.]],
+        getSectorName(x, y), math.floor(field_radius / 1000), math.floor(field_radius / 1000))
+end
+
+--- Comms for the Messenger, in case the players hail it again.
+local function commsMessenger()
+    math.abs(0) -- Provides global context for SeriousProton
+    setCommsMessage(messengerWarning())
+end
+
+--- Brings in the Messenger near player ship `p`, with its warning.
+spawnMessenger = function(p)
+    if messenger ~= nil or p == nil or not p:isValid() then
+        return
+    end
+    messenger = CpuShip():setTemplate("Flavia"):setFaction("Couriers"):setCallSign("The Messenger")
+    local px, py = p:getPosition()
+    setCirclePos(messenger, px, py, random(0, 360), 3500)
+    messenger:setCanBeDestroyed(false)
+    messenger:orderIdle()
+    messenger:setDescriptions(
+        "An unmarked courier ship with no registry.",
+        "An unmarked courier ship. Its hull plating is etched with lines of tiny, looping script."
+    )
+    messenger:setCommsScript(""):setCommsFunction(commsMessenger)
+    hailPlayers(messenger, messengerWarning(), "#c0a0ff")
+    local sx, sy = symposium:getPosition()
+    for idx_, ship in ipairs(playerList) do
+        if ship:isValid() then
+            ship:commandAddWaypoint(sx, sy)
+        end
+    end
+    logPlayers(string.format("Deliver the unstable 235 to the Intergalactic Symposium in sector %s. Waypoint added.", getSectorName(sx, sy)), "Yellow")
+    messenger_timer = messenger_stay_time
+end
+
+--- Sends the Messenger away after its warning.
+local function updateMessenger(delta)
+    if messenger_timer == nil then
+        return
+    end
+    messenger_timer = messenger_timer - delta
+    if messenger_timer <= 0 then
+        messenger_timer = nil
+        if messenger:isValid() then
+            local x, y = messenger:getPosition()
+            warpInEffect(x, y, 800)
+            messenger:destroy()
+            logPlayers("The Messenger has slipped away. Nobody knows how it gets through a one-way jammer.", "#c0a0ff")
         end
     end
 end
@@ -543,11 +874,6 @@ local function clearOfMines(x, y, clearance)
     return true
 end
 
---- Flashes a warp-in effect at x, y.
-local function warpInEffect(x, y, size)
-    ElectricExplosionEffect():setPosition(x, y):setSize(size):setOnRadar(true)
-end
-
 --- Places a mine at x, y if it is inside the field and clear of the barrage stations.
 local function placeMine(x, y)
     if distance(x, y, field_x, field_y) < field_radius - 500 and clearOfTurrets(x, y, 1500) and clearOfBodies(x, y, 500) then
@@ -563,9 +889,9 @@ local function inRingExit(x, y)
     -- Same convention as vectorFromAngle. math.atan2 is gone in newer Lua versions.
     local a = math.deg((math.atan2 or math.atan)(y - field_y, x - field_x)) % 360
     for idx_, ring in ipairs(mine_ring_exits) do
-        if math.abs(d - ring.radius) < mine_ring_rows * mine_ring_row_spacing / 2 + 3000 then
-            for e = 0, 2 do
-                if math.abs((a - (ring.first + e * 60) + 180) % 360 - 180) < ring.half_angle then
+        if math.abs(d - ring.radius) < ring.rows * mine_ring_row_spacing / 2 + 3000 then
+            for e = 0, mine_ring_exit_count - 1 do
+                if math.abs((a - (ring.first + e * mine_ring_exit_spacing) + 180) % 360 - 180) < ring.half_angle then
                     return true
                 end
             end
@@ -574,24 +900,43 @@ local function inRingExit(x, y)
     return false
 end
 
---- Lays a dense ring of mines around the field center, with exits.
+--- Returns true if x, y is in one of the eight clear lanes through the asteroid rings.
+-- The lanes run straight out from the ring center at 0, 0.
+local function inLane(x, y)
+    local d = distance(x, y, 0, 0)
+    if d > lane_clear_radius then
+        return false
+    end
+    local a = math.deg((math.atan2 or math.atan)(y, x)) % 360
+    for n = 0, lane_count - 1 do
+        local diff = math.abs((a - (lane_offset + n * 360 / lane_count) + 180) % 360 - 180)
+        -- Distance from the lane's center line, plus a little margin.
+        if diff < 90 and d * math.sin(math.rad(diff)) < lane_width / 2 + 500 then
+            return true
+        end
+    end
+    return false
+end
+
+--- Lays a ring of mines around the field center, with exits.
 --
--- The ring is `mine_ring_rows` staggered rows deep, close enough together that any
--- path through it crosses several trigger ranges. It has three exits
--- `mine_ring_exit_width` wide, 60 degrees apart, starting at a random angle.
-local function createMineRing(radius)
-    local first_exit = random(0, 360)
+-- The ring is `ring.rows` staggered rows deep, close enough together that any path
+-- through it crosses a trigger range. It has `mine_ring_exit_count` exits
+-- `mine_ring_exit_width` wide, `mine_ring_exit_spacing` degrees apart, the first at
+-- `first_exit` degrees.
+local function createMineRing(ring, first_exit)
+    local radius = ring.radius
     local exit_half_angle = math.deg(mine_ring_exit_width / radius) / 2
-    table.insert(mine_ring_exits, {radius = radius, first = first_exit, half_angle = exit_half_angle})
-    for row = 0, mine_ring_rows - 1 do
-        local r = radius + (row - (mine_ring_rows - 1) / 2) * mine_ring_row_spacing
+    table.insert(mine_ring_exits, {radius = radius, rows = ring.rows, first = first_exit, half_angle = exit_half_angle})
+    for row = 0, ring.rows - 1 do
+        local r = radius + (row - (ring.rows - 1) / 2) * mine_ring_row_spacing
         local count = math.floor(2 * math.pi * r / mine_ring_spacing)
         for n = 1, count do
             -- Every other row is shifted by half a step, so the rows don't line up.
             local a = (n + (row % 2) * 0.5) * 360 / count
             local in_exit = false
-            for e = 0, 2 do
-                if math.abs((a - (first_exit + e * 60) + 180) % 360 - 180) < exit_half_angle then
+            for e = 0, mine_ring_exit_count - 1 do
+                if math.abs((a - (first_exit + e * mine_ring_exit_spacing) + 180) % 360 - 180) < exit_half_angle then
                     in_exit = true
                 end
             end
@@ -611,12 +956,44 @@ local function onHullKitPickup(drop, ship)
     ship:addToShipLog(string.format("Hull repair kit recovered: hull restored by %d%%.", math.floor(hull_kit_repair * 100)), "#80c0ff")
 end
 
+--- Starts the house music playlist, unless it is already playing or empty.
+local function startMusic()
+    if music_index == nil and #house_music > 0 then
+        music_index = 0
+        music_timer = 0
+    end
+end
+
+--- Switches to the journey music. The current track plays out first, then the
+--- journey list loops from its first track.
+local function startJourneyMusic()
+    music_playlist = journey_music
+    if music_index == nil then
+        music_timer = 0
+    end
+    music_index = 0
+end
+
+--- Plays the next track in the playlist when the current one has finished.
+local function updateMusic(delta)
+    if music_index == nil then
+        return
+    end
+    music_timer = music_timer - delta
+    if music_timer <= 0 then
+        music_index = music_index % #music_playlist + 1
+        local track = music_playlist[music_index]
+        playSoundFile(track.file)
+        music_timer = track.length + music_gap
+    end
+end
+
 --- Scatters supply drops through the field, clear of terrain and mines.
 local function createSupplyDrops()
     local kinds = {
-        {name = "Hull Repair Kit", count = byDifficulty(16, 12, 8)},
-        {name = "Mine Cache", count = byDifficulty(10, 8, 6), weapon = "Mine", amount = 4},
-        {name = "Homing Missile Cache", count = byDifficulty(18, 14, 10), weapon = "Homing", amount = 6},
+        {name = "Hull Repair Kit", count = byDifficulty(32, 24, 16)},
+        {name = "Mine Cache", count = byDifficulty(20, 16, 12), weapon = "Mine", amount = 4},
+        {name = "Homing Missile Cache", count = byDifficulty(36, 28, 20), weapon = "Homing", amount = 6},
     }
     for idx_, kind in ipairs(kinds) do
         for n = 1, kind.count do
@@ -639,32 +1016,119 @@ local function createSupplyDrops()
     end
 end
 
---- Creates a rotating barrage station at x, y.
-local function createTurret(x, y)
+--- Creates a barrage station at x, y.
+--
+-- With no `aim`, it is a rotating Barrage Platform that fires in every direction as it
+-- turns. With an `aim` in degrees, it is a Lance Platform: it never turns, and fires
+-- one fast stream of HVLIs in a straight line along that bearing.
+local function createTurret(x, y, aim)
     turret_index = turret_index + 1
     local station = SpaceStation():setTemplate("Small Station"):setFaction("Directorate")
-    station:setCallSign(string.format("Barrage Platform %d", turret_index)):setPosition(x, y)
-    station:setDescriptions(
-        "A Directorate weapons platform.",
-        "A rotating Directorate barrage platform. Its HVLI barrels fire in every direction as it turns."
-    )
+    station:setPosition(x, y)
+    if aim == nil then
+        station:setCallSign(string.format("Barrage Platform %d", turret_index))
+        station:setDescriptions(
+            "A Directorate weapons platform.",
+            "A rotating Directorate barrage platform. Its HVLI barrels fire in every direction as it turns."
+        )
+    else
+        station:setCallSign(string.format("Lance Platform %d", turret_index))
+        station:setDescriptions(
+            "A Directorate weapons platform.",
+            string.format("A fixed Directorate lance platform. It fires a single stream of HVLIs in a straight line, on heading %d. Stay out of that line.", math.floor((aim + 90) % 360))
+        )
+    end
     station:setCommsScript(""):setCommsFunction(function()
         math.abs(0) -- Provides global context for SeriousProton
         setCommsMessage("This platform does not negotiate.")
     end)
-    local spin = random(15, 35)
-    if random(0, 1) < 0.5 then
-        spin = -spin
+    if aim == nil then
+        local spin = random(15, 35)
+        if random(0, 1) < 0.5 then
+            spin = -spin
+        end
+        table.insert(turrets, {
+            obj = station,
+            angle = random(0, 360),
+            spin = spin,
+            barrels = byDifficulty(2, 3, 4),
+            interval = byDifficulty(0.8, 0.6, 0.45),
+            timer = random(0, 1),
+        })
+    else
+        table.insert(turrets, {
+            obj = station,
+            angle = aim % 360,
+            spin = 0,
+            barrels = 1,
+            interval = byDifficulty(0.5, 0.35, 0.25),
+            timer = random(0, 1),
+        })
     end
-    table.insert(turrets, {
-        obj = station,
-        angle = random(0, 360),
-        spin = spin,
-        barrels = byDifficulty(2, 3, 4),
-        interval = byDifficulty(0.8, 0.6, 0.45),
-        timer = random(0, 1),
-    })
     warpInEffect(x, y, 800)
+end
+
+--- Returns a Directorate warship template, tougher as more waves arrive.
+local function warshipTemplate()
+    local templates = {"MT52 Hornet", "Adder MK5", "Phobos T3", "Nirvana R5"}
+    return templates[math.min(#templates, irandom(1, 2 + math.floor(wave_count / 2)))]
+end
+
+--- Returns the direction player ship `p` is heading, in degrees: its direction of
+-- travel when it is moving, otherwise straight out from the field center.
+local function travelAngle(p)
+    local atan2 = math.atan2 or math.atan
+    local vx, vy = p:getVelocity()
+    if vx * vx + vy * vy > 100 then
+        return math.deg(atan2(vy, vx))
+    end
+    local px, py = p:getPosition()
+    if distance(px, py, field_x, field_y) > 1000 then
+        return math.deg(atan2(py - field_y, px - field_x))
+    end
+    return p:getRotation()
+end
+
+--- Returns true if x, y is at least `ship_spacing` from every ship in `ships`.
+local function clearOfShips(x, y, ships)
+    for idx_, ship in ipairs(ships) do
+        if ship:isValid() and distance(ship, x, y) < ship_spacing then
+            return false
+        end
+    end
+    return true
+end
+
+--- Returns true if x, y is a good place for a warship to warp in: inside the field,
+-- clear of mines, terrain and the other ships in `ships`.
+local function goodShipSpot(x, y, ships)
+    return distance(x, y, field_x, field_y) < field_radius - 1000 and clearOfMines(x, y, 1200)
+        and clearOfBodies(x, y, 1000) and clearOfShips(x, y, ships)
+end
+
+--- Returns a spot ahead of player ship `p`, across the course it is flying, or nil.
+local function pathSpot(p, ships)
+    local px, py = p:getPosition()
+    local heading = travelAngle(p)
+    for attempt = 1, 15 do
+        local ax, ay = vectorFromAngle(heading, random(path_distance[1], path_distance[2]))
+        local ox, oy = vectorFromAngle(heading + 90, random(-path_spread, path_spread))
+        local x, y = px + ax + ox, py + ay + oy
+        if goodShipSpot(x, y, ships) then
+            return x, y
+        end
+    end
+    return nil
+end
+
+--- Creates a Directorate warship at x, y.
+local function createWarship(x, y, description)
+    local ship = CpuShip():setTemplate(warshipTemplate()):setFaction("Directorate"):setPosition(x, y)
+    ship:setCallSign(nextWarshipName())
+    ship:setDescription(description)
+    warpInEffect(x, y, 500)
+    table.insert(warships, ship)
+    return ship
 end
 
 --- Warps a wave of Directorate warships in around the player ship, and drops mines ahead of it.
@@ -683,51 +1147,43 @@ local function spawnWave()
     local count = math.min(byDifficulty(3, 5, 8), byDifficulty(12, 20, 30) - alive)
     local px, py = p:getPosition()
     for n = 1, count do
-        -- Warships only warp into the field, never outside it. Near the edge, try a
-        -- few directions; if none of them is inside, this ship doesn't come.
+        -- Some ships cut across the player's course; the rest come from every side.
+        -- Warships only warp into the field, never outside it, so near the edge a
+        -- ship may find no spot and not come.
         local x, y = nil, nil
+        if n <= math.ceil(count * path_share) then
+            x, y = pathSpot(p, warships)
+        end
         for attempt = 1, 10 do
             local dx, dy = vectorFromAngle(random(0, 360), random(wave_spawn_distance[1], wave_spawn_distance[2]))
-            if x == nil and distance(px + dx, py + dy, field_x, field_y) < field_radius - 1000 and clearOfMines(px + dx, py + dy, 1200) and clearOfBodies(px + dx, py + dy, 1000) then
+            if x == nil and goodShipSpot(px + dx, py + dy, warships) then
                 x, y = px + dx, py + dy
             end
         end
-        if x == nil then
-            break
+        if x ~= nil then
+            local ship = createWarship(x, y, "A Directorate warship sent to recover the unstable 235.")
+            ship:orderAttack(p)
         end
-        local ship = CpuShip():setTemplate(warshipTemplate()):setFaction("Directorate"):setPosition(x, y)
-        ship:setCallSign(nextWarshipName())
-        ship:setDescription("A Directorate warship sent to recover the unstable 235.")
-        ship:orderAttack(p)
-        warpInEffect(x, y, 500)
-        table.insert(warships, ship)
     end
-    -- A line of mines across the player's course, but never in a mine ring exit.
+    -- A line of mines across the player's course, but never in a mine ring exit or a lane.
     local heading = p:getRotation()
     local ax, ay = vectorFromAngle(heading, mine_drop_distance)
     for n = -2, 2 do
         local ox, oy = vectorFromAngle(heading + 90, n * 700)
-        if not inRingExit(px + ax + ox, py + ay + oy) then
+        if not inRingExit(px + ax + ox, py + ay + oy) and not inLane(px + ax + ox, py + ay + oy) then
             placeMine(px + ax + ox, py + ay + oy)
         end
     end
 end
 
---- Deploys the one-way warp jammer around player ship `p`, with mines and barrage stations.
-deployField = function(p)
+--- Deploys the one-way warp jammer at the center of the asteroid rings, with mines
+-- and barrage stations.
+deployField = function()
     if field_deployed then
         return
     end
-    if p == nil or not p:isValid() then
-        p = closestPlayer(secret_base:getPosition())
-        if p == nil then
-            return
-        end
-    end
     field_deployed = true
-    local px, py = p:getPosition()
-    local ox, oy = vectorFromAngle(random(0, 360), field_center_offset)
-    field_x, field_y = px + ox, py + oy
+    field_x, field_y = 0, 0
 
     -- The jammer core. The WarpJammer object does the actual jamming; the station is
     -- what the players see, and can't be destroyed.
@@ -754,20 +1210,27 @@ deployField = function(p)
     end
     Zone():setPoints((table.unpack or unpack)(points)):setColor(90, 10, 10):setLabel("Jamming Field")
 
-    -- Dense rings of mines, each with its own three exits.
-    for idx_, radius in ipairs(mine_ring_radii) do
-        createMineRing(radius)
+    -- Rings of mines, each with two exits. The inner ring's exits sit halfway between
+    -- two of the asteroid lanes, and each ring after that is turned about 90 degrees
+    -- from the one inside it, so every exit leads into a long run around the ring.
+    local exit_angle = lane_offset + 360 / lane_count * (irandom(0, lane_count - 1) + 0.5)
+    for idx_, ring in ipairs(mine_rings) do
+        if idx_ > 1 then
+            exit_angle = exit_angle + mine_ring_exit_turn + random(-mine_ring_exit_jitter, mine_ring_exit_jitter)
+        end
+        createMineRing(ring, exit_angle % 360)
     end
 
     -- Scattered mines, kept out of the ring exits so the exits stay clear.
-    for n = 1, byDifficulty(350, 600, 900) do
+    for n = 1, byDifficulty(700, 1200, 1800) do
         local x, y = randomFieldPoint(start_clear_radius, field_radius)
-        if not inRingExit(x, y) and clearOfMines(x, y, 1500) then
+        if not inRingExit(x, y) and not inLane(x, y) and clearOfMines(x, y, 1500) then
             placeMine(x, y)
         end
     end
 
     createSupplyDrops()
+    startMusic()
 
     -- Every map sector that overlaps the field gets a garrison.
     for col = math.floor((field_x - field_radius) / sector_size), math.floor((field_x + field_radius) / sector_size) do
@@ -787,61 +1250,66 @@ deployField = function(p)
 
 Unstable 235 is the most tightly controlled element in known space. It powers worlds, and it builds weapons that end them. Your local government swore to us that none existed in this system. They lied, and you are carrying the proof.
 
-A one-way warp jammer now covers %dU around you. Ships can warp in. Nothing warps out. Surrender, or be stopped.]], math.floor(field_radius / 1000))
+A one-way warp jammer now covers %dU around the rings. Ships can warp in. Nothing warps out. Surrender the unstable 235, or be stopped.]], math.floor(field_radius / 1000))
+    -- The Messenger has just hailed, so this usually lands in the ship's log.
     hailPlayers(jammer_core, text, "#ff4040")
     logPlayers(string.format("Warp and jump drives jammed. Escape the jamming field under impulse: get more than %dU from the One-Way Warp Jammer.", math.floor(field_radius / 1000)), "Yellow")
-    for idx_, ship in ipairs(playerList) do
-        if ship:isValid() then
-            ship:commandAddWaypoint(field_x, field_y)
-        end
-    end
 end
 
---- Returns a Directorate warship template, tougher as more waves arrive.
-local function warshipTemplate()
-    local templates = {"MT52 Hornet", "Adder MK5", "Phobos T3", "Nirvana R5"}
-    return templates[math.min(#templates, irandom(1, 2 + math.floor(wave_count / 2)))]
-end
-
---- Returns a spot inside both the sector and the field, preferably `garrison_distance`
--- from the nearest player ship, and never closer than `min_dist`. Returns nil if there is none.
-local function garrisonSpot(sector, min_dist)
+--- Returns a random spot anywhere in the sector and inside the field, at least
+-- `min_dist` from every player ship and clear of `ships`. Returns nil if there is none.
+local function garrisonSpot(sector, min_dist, ships)
     local x0, y0 = sector.col * sector_size, sector.row * sector_size
-    local fallback_x, fallback_y = nil, nil
     for attempt = 1, 30 do
         local x, y = x0 + random(0, sector_size), y0 + random(0, sector_size)
         local p_, d = closestPlayer(x, y)
-        if distance(x, y, field_x, field_y) < field_radius - 1000 and (d == nil or d > min_dist) and clearOfMines(x, y, 1200) and clearOfBodies(x, y, 1000) then
-            if d == nil or d < garrison_distance[2] then
-                return x, y
-            end
-            fallback_x, fallback_y = x, y
+        if (d == nil or d > min_dist) and goodShipSpot(x, y, ships) then
+            return x, y
         end
     end
-    return fallback_x, fallback_y
+    return nil
 end
 
---- Warps in the garrison of one field sector: warships that guard the sector, and
--- spinning barrage platforms.
+--- Warps in the garrison of one field sector: warships spread over the sector, some
+-- of them across the nearest player's course, spinning barrage platforms and fixed
+-- lance platforms.
+--
+-- Each warship guards the spot it warped in at, so the garrison stays spread out
+-- instead of gathering in the middle of the sector.
 local function spawnGarrison(sector)
     sector.spawned = true
     local cx, cy = (sector.col + 0.5) * sector_size, (sector.row + 0.5) * sector_size
-    for n = 1, byDifficulty(3, 5, 7) do
-        local x, y = garrisonSpot(sector, garrison_distance[1])
+    local p = closestPlayer(cx, cy)
+    local count = byDifficulty(3, 5, 7)
+    for n = 1, count do
+        local x, y = nil, nil
+        if p ~= nil and n <= math.ceil(count * path_share) then
+            x, y = pathSpot(p, warships)
+        end
+        if x == nil then
+            x, y = garrisonSpot(sector, garrison_min_distance, warships)
+        end
         if x ~= nil then
-            local ship = CpuShip():setTemplate(warshipTemplate()):setFaction("Directorate"):setPosition(x, y)
-            ship:setCallSign(nextWarshipName())
-            ship:setDescription("A Directorate warship guarding the jamming field.")
-            ship:orderDefendLocation(cx, cy)
-            warpInEffect(x, y, 500)
-            table.insert(warships, ship)
+            local ship = createWarship(x, y, "A Directorate warship guarding the jamming field.")
+            ship:orderDefendLocation(x, y)
         end
     end
     -- Platforms keep a little more distance, since they open fire straight away.
     for n = 1, byDifficulty(1, 1, 2) do
-        local x, y = garrisonSpot(sector, garrison_distance[1] + 1000)
+        local x, y = garrisonSpot(sector, garrison_min_distance + 1000, warships)
         if x ~= nil then
             createTurret(x, y)
+        end
+    end
+    -- Lance platforms fire across the nearest player's course, give or take a little.
+    for n = 1, byDifficulty(1, 2, 2) do
+        local x, y = garrisonSpot(sector, garrison_min_distance + 1000, warships)
+        if x ~= nil then
+            local aim = random(0, 360)
+            if p ~= nil then
+                aim = travelAngle(p) + (random(0, 1) < 0.5 and 90 or -90) + random(-25, 25)
+            end
+            createTurret(x, y, aim)
         end
     end
 end
@@ -910,15 +1378,23 @@ local function updateField(delta)
         wave_timer = byDifficulty(60, 45, 35)
         spawnWave()
     end
-    for idx_, p in ipairs(playerList) do
-        if p:isValid() and distance(p, field_x, field_y) > field_radius then
-            game_over = true
-            local text = _("msgMainscreen&Spectbanner", "Mission: SUCCESS (escaped the Directorate's jamming field)")
-            victory("Human Navy")
-            globalMessage(text)
-            setBanner(text)
-            return
-        end
+    if not escaped and carrier ~= nil and carrier:isValid() and distance(carrier, field_x, field_y) > field_radius then
+        escaped = true
+        startJourneyMusic()
+        logPlayers("Clear of the jamming field. The jump drive is working again. Get to the Intergalactic Symposium and dock.", "Yellow")
+    end
+end
+
+--- Wins the game when the ship carrying the unstable 235 docks at the Symposium.
+local function updateDelivery()
+    if carrier ~= nil and carrier:isValid() and carrier:isDocked(symposium) then
+        local text = string.format([[Welcome to the Intergalactic Symposium, %s.
+
+The unstable 235 is in safe hands now. It will be taken care of peacefully, and the Directorate will never touch it.
+
+As for BAD_LED... the Symposium has a very long memory.]], carrier:getCallSign())
+        symposium:sendCommsMessage(carrier, text)
+        endGame("Human Navy", _("msgMainscreen&Spectbanner", "Mission: SUCCESS (the unstable 235 reached the Intergalactic Symposium)"))
     end
 end
 
@@ -930,7 +1406,18 @@ function gmButtons()
     clearGMFunctions()
     addGMFunction(_("buttonGM", "Deploy jammer"), function()
         math.abs(0) -- Provides global context for SeriousProton
-        deployField(closestPlayer(secret_base:getPosition()))
+        deployField()
+    end)
+    addGMFunction(_("buttonGM", "BAD_LED warps out"), function()
+        math.abs(0) -- Provides global context for SeriousProton
+        bad_led_hit = true
+        if bad_led_state == "waiting" then
+            bad_led_state = "bragging"
+        end
+    end)
+    addGMFunction(_("buttonGM", "Start music"), function()
+        math.abs(0) -- Provides global context for SeriousProton
+        startMusic()
     end)
     addGMFunction(_("buttonGM", "Send wave"), function()
         math.abs(0) -- Provides global context for SeriousProton
@@ -977,15 +1464,16 @@ function init()
     directorate_faction:setDescription("The neighboring interplanetary government. It controls unstable 235 across known space, and does not forgive anyone who hides it.")
     directorate_faction:setEnemy(getFactionInfo("Human Navy"))
 
-    -- The mining rings and stations.
+    -- The mining rings have shifted: every band has the same eight gaps, so eight
+    -- straight lanes lead out from the center.
+    lane_offset = random(0, 360 / lane_count)
+    local gaps = {}
+    for n = 0, lane_count - 1 do
+        table.insert(gaps, lane_offset + n * 360 / lane_count)
+    end
     for idx_, radius in ipairs(ring_radii) do
-        local gaps = {}
-        local gap_offset = random(0, 360)
-        for g = 1, 3 do
-            table.insert(gaps, gap_offset + g * 120 + random(-20, 20))
-        end
-        createAsteroidBand(radius - lane_half_width, gaps, 1800)
-        createAsteroidBand(radius + lane_half_width, gaps, 1800)
+        createAsteroidBand(radius - lane_half_width, gaps, lane_width)
+        createAsteroidBand(radius + lane_half_width, gaps, lane_width)
     end
     local stations = {
         {"Medium Station", "Mining Guild Depot",    "Headquarters of the asteroid miners."},
@@ -997,12 +1485,16 @@ function init()
         local station = SpaceStation():setTemplate(info[1]):setFaction("Human Navy"):setRotation(random(0, 360))
         station:setCallSign(info[2]):setDescription(info[3])
         setCirclePos(station, 0, 0, -90 + (n - 1) * 90, station_radius)
+        -- Keep mines and warships from appearing on top of the stations.
+        local x, y = station:getPosition()
+        table.insert(station_spots, {x = x, y = y, r = 1500})
     end
 
     mining_central = SpaceStation():setTemplate("Large Station"):setFaction("Independent")
     mining_central:setCallSign("Mining Central"):setPosition(central_x, central_y)
     mining_central:setDescription("The hub of the outer mining clusters.")
     mining_central:setCanBeDestroyed(false)
+    table.insert(station_spots, {x = central_x, y = central_y, r = 2000})
 
     clusters = {
         {name = "Cluster 1", angle = -45},
@@ -1056,6 +1548,7 @@ function init()
     dig_site = SpaceStation():setTemplate("Small Station"):setFaction("Independent"):setCallSign("Dig Site Four")
     dig_site:setPosition(clusters[4].x, clusters[4].y)
     dig_site:setCanBeDestroyed(false)
+    table.insert(station_spots, {x = clusters[4].x, y = clusters[4].y, r = 1500})
     local caravan_names = {"Ore Hauler Magpie", "Ore Hauler Bramble", "Ore Hauler Tumbler", "Ore Hauler Fennec"}
     for n, name in ipairs(caravan_names) do
         local ship = CpuShip():setTemplate("Transport" .. irandom(1, 5) .. "x" .. irandom(2, 4)):setFaction("Independent")
@@ -1076,15 +1569,35 @@ function init()
     secret_base:setCanBeDestroyed(false)
 
     createTerrain(sx, sy)
+    for idx_, spot in ipairs(station_spots) do
+        table.insert(bodies, spot)
+    end
 
-    -- Two unstable 235 samples east of the Scriptorium.
-    createSample(sx + sample_distance, sy - sample_spread / 2)
-    createSample(sx + sample_distance, sy + sample_spread / 2)
+    -- The two deposits at the center of the rings. BAD_LED sits on the one he took,
+    -- across the center from the one that's left.
+    local dx, dy = vectorFromAngle(random(0, 360), sample_distance)
+    createSample(dx, dy)
+    createBadLed(-dx, -dy)
 
-    -- The player ship starts west of the Scriptorium, facing the samples.
+    -- The Intergalactic Symposium, well outside the jamming field.
+    local yx, yy = vectorFromAngle(symposium_angle, symposium_distance)
+    symposium = SpaceStation():setTemplate("Large Station"):setFaction("Independent"):setCallSign("Intergalactic Symposium")
+    symposium:setPosition(yx, yy)
+    symposium:setDescription("A neutral meeting place for every government in known space. It handles the matters nobody else can be trusted with.")
+    symposium:setCanBeDestroyed(false)
+
+    -- Terrain around the jammer, kept clear of the Symposium and the Scriptorium.
+    table.insert(bodies, {x = yx, y = yy, r = 5000, terrain_only = true})
+    table.insert(bodies, {x = sx, y = sy, r = 5000, terrain_only = true})
+    createFieldTerrain()
+    finishTerrain()
+
+    -- The player ship starts at the mouth of a random lane, outside the asteroid rings.
     local player = PlayerSpaceship():setFaction("Human Navy"):setTemplate(getScenarioSetting("PlayerShip"))
     player:setCallSign("USS-SUNDAY NCC-67")
-    player:setPosition(sx - player_start_distance, sy):setRotation(0)
+    local start_angle = lane_offset + irandom(0, lane_count - 1) * 360 / lane_count
+    setCirclePos(player, 0, 0, start_angle, player_start_distance)
+    player:setRotation(start_angle + 180)
     if not player:hasJumpDrive() then
         player:setJumpDrive(true)
         player:setJumpDriveRange(5000, 50000)
@@ -1097,13 +1610,14 @@ function init()
 
     gmButtons()
 
-    secret_base:sendCommsMessage(player, [[Two canisters of unstable 235 are floating just east of the Scriptorium.
+    player:commandAddWaypoint(0, 0)
+    secret_base:sendCommsMessage(player, string.format([[The Calligrapher again. Something has changed in the mining belt.
 
-Shoot one, and it collapses into a black hole. Keep your distance if you do.
+The asteroid rings have shifted. Every band has opened in the same eight places, so there are now eight clear lanes running straight out from the center, and the two deposits of unstable 235 have settled right in the middle, in sector %s. Your nav screen has the waypoint.
 
-Fly into one, and it is yours. Your hull will be twice as strong, and your reactor, maneuvering and impulse will run at full power, without overheating and without draining your energy.
+Remember what I told you: someone has been listening to every coordinate you received. Expect company at the center.
 
-Be quick. Unstable 235 is the most tightly controlled element in known space, and the Interplanetary Directorate next door does not know it exists here. The moment anyone touches it, they will.]])
+And do not fire on the 235. One shot, and it collapses into a black hole.]], getSectorName(0, 0)))
 end
 
 -------------------------------------------------------------------------------
@@ -1126,6 +1640,8 @@ local function updateCaravan(delta)
 end
 
 function update(delta)
+    -- The music keeps going after the mission ends.
+    updateMusic(delta)
     if game_over then
         return
     end
@@ -1137,17 +1653,22 @@ function update(delta)
         end
     end
     if not alive then
-        game_over = true
-        local text = _("msgMainscreen&Spectbanner", "Mission: FAILED (the USS-SUNDAY NCC-67 was destroyed)")
-        victory("Directorate")
-        globalMessage(text)
-        setBanner(text)
+        endGame("Directorate", _("msgMainscreen&Spectbanner", "Mission: FAILED (the USS-SUNDAY NCC-67 was destroyed)"))
+        return
+    end
+    if carrier ~= nil and not carrier:isValid() then
+        endGame("Directorate", _("msgMainscreen&Spectbanner", "Mission: FAILED (the unstable 235 fell into the hands of the Directorate)"))
         return
     end
 
     updateSamples()
+    if game_over then
+        return
+    end
     updateBoosted()
     updateCaravan(delta)
+    updateBadLed(delta)
+    updateMessenger(delta)
 
     if field_deployed then
         updateTurrets(delta)
@@ -1158,11 +1679,6 @@ function update(delta)
             updateEnemySpeed()
         end
         updateField(delta)
-    else
-        -- The Directorate finds out on its own if nobody touches the 235.
-        start_timer = start_timer + delta
-        if start_timer > deploy_delay then
-            deployField(closestPlayer(secret_base:getPosition()))
-        end
     end
+    updateDelivery()
 end
